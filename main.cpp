@@ -11,12 +11,6 @@
 #include "Candidate.h"
 #include "Logging.h"
 
-enum class Lottery_State {
-    IDLE,
-    FOLD_RUN,
-    SHOW_WINNER
-};
-
 /* We will use this renderer to draw into this window every frame. */
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
@@ -26,31 +20,14 @@ static const char* VERSION = "0.1";
 static const char* CANDIDATE_DIR = "asset\\candidates";
 static const char* BACKGROUIND_PATH = "asset\\background.png";
 static std::vector<std::string> vec_candidates;
-static Lottery_State state_ = Lottery_State::IDLE;
-static std::shared_ptr<Candidate_Iterator> canditate_iter = nullptr;
+static std::shared_ptr<Lottery_Slide_Show> slide_show = nullptr;
 static Uint64 last_tick_ = 0;
-static bool change_state_ = false;
-static int winner_idx = 0;
 
 
 #define WINDOW_WIDTH 640
 #define WINDOW_HEIGHT 480
 int win_w;
 int win_h;
-
-std::random_device rd_;
-std::default_random_engine generator_;
-static void Random_init()
-{
-    generator_ = std::default_random_engine(rd_());
-}
-
-// generate random [min,max)
-static int Random_int(int min, int max)
-{
-    std::uniform_int_distribution<int> unif(min, max);
-    return unif(generator_);
-}
 
 static SDL_AppResult List_Files_To_Vector_(std::vector<std::string>& v, const char* path, const char* pattern)
 {
@@ -82,7 +59,6 @@ static SDL_AppResult List_Files_To_Vector_(std::vector<std::string>& v, const ch
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
     Logging_Init();
-    Random_init();
     SDL_SetAppMetadata(TITLE, VERSION, TITLE);
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -151,7 +127,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 
     Logging_Write("Initially gather %d candidates", vec_candidates.size());
 
-    canditate_iter = std::make_shared<Idle_Candidate_Iterator>(window, renderer, vec_candidates);    
+    slide_show = std::make_shared<Lottery_Slide_Show>(window, renderer, vec_candidates);
     last_tick_ = SDL_GetTicks();
     Logging_Write("SDL_AppInit OK");
     return SDL_APP_CONTINUE;  /* carry on with the program! */
@@ -185,38 +161,6 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     const Uint64 elapsed = now - last_tick_;
     last_tick_ = now;
 
-    if (change_state_)
-    {
-        switch (state_)
-        {
-        case Lottery_State::IDLE:
-            canditate_iter = std::make_shared<Fold_Candidate_Iterator>(window, renderer, vec_candidates);
-            state_ = Lottery_State::FOLD_RUN;
-            Logging_Write("Start lottery");
-            break;
-
-        case Lottery_State::FOLD_RUN:
-            winner_idx = Random_int(0, vec_candidates.size());
-            Logging_Write("Winner is %s", vec_candidates[winner_idx].c_str());
-            canditate_iter = std::make_shared<Winner_Candidate_Iterator>(window, renderer, vec_candidates, winner_idx);
-            state_ = Lottery_State::SHOW_WINNER;
-            break;
-
-        case Lottery_State::SHOW_WINNER:
-            // remove winner, so no one can win twice
-            if (winner_idx != vec_candidates.size() - 1)
-            {
-                vec_candidates[winner_idx] = std::move(vec_candidates.back());
-            }
-            vec_candidates.pop_back();
-            Logging_Write("Back to idle, remain %d candidates", vec_candidates.size());
-            canditate_iter = std::make_shared<Idle_Candidate_Iterator>(window, renderer, vec_candidates);
-            state_ = Lottery_State::IDLE;
-            break;
-        }
-        change_state_ = false;
-    }
-
     /* as you can see from this, rendering draws over whatever was drawn before it. */
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);  /* black, full alpha */
     SDL_RenderClear(renderer);  /* start with a blank canvas. */
@@ -228,10 +172,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     dst_rect.h = (float)win_h;
     SDL_RenderTexture(renderer, bg_texture, NULL, &dst_rect);
 
-    if (canditate_iter->Run(elapsed) == false)
-    {
-        change_state_ = true;        
-    }
+    slide_show->Run(elapsed);
 
     SDL_RenderPresent(renderer);  /* put it all on the screen! */
 
@@ -242,7 +183,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {    
     Logging_Write("SDL_AppQuit");
-    canditate_iter = nullptr;
+    slide_show = nullptr;
     SDL_DestroyTexture(bg_texture);
     /* SDL will clean up the window/renderer for us. */
     IMG_Quit();
